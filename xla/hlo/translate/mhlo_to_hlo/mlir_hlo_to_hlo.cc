@@ -2481,17 +2481,32 @@ LogicalResult ExportXlaOp(BitcastConvertOp op, OpLoweringContext ctx) {
 
 LogicalResult ExportXlaOp(CollectiveBroadcastOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
-  xla::XlaOp operand;
-  if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op))) {
+
+  SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op.getOperation(), op.getOperands(), ctx, operands))) {
     return failure();
   }
+
   auto replica_groups = Convert_replica_groups(op.getReplicaGroups(), op);
   if (!replica_groups.ok()) {
     return op.emitOpError(replica_groups.status().ToString());
   }
+
   auto result = xla::CollectiveBroadcastWithDeviceList(
-      operand, **replica_groups, Convert_channel_handle(op.getChannelHandle()));
-  value_map[op->getResult(0)] = result;
+      operands, **replica_groups, Convert_channel_handle(op.getChannelHandle()),
+      op.getHasDynamicRoot());
+
+  // A collective_broadcast with more than one data operand produces a tuple.
+  mlir::FailureOr<xla::Shape> shape_or =
+      xla::ExtractXlaShape(op.getOperation());
+  if (failed(shape_or)) {
+    return failure();
+  }
+  if (shape_or->IsTuple()) {
+    BuildGetTupleElementsForTupleResults(op, result, ctx);
+  } else {
+    value_map[op->getResult(0)] = result;
+  }
 
   return success();
 }
@@ -3614,9 +3629,15 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
       return failure();
     }
 
+    mlir::FailureOr<xla::Shape> output_shape_or =
+        xla::ExtractXlaShape(&collective);
+    if (failed(output_shape_or)) {
+      return failure();
+    }
+
     xla::Shape input_shape = xla::ShapeUtil::MakeTupleShape(
         {xla::TypeToShape(op.getOperand(0).getType())});
-    xla::Shape output_shape = xla::TypeToShape(collective_broadcast.getType());
+    xla::Shape output_shape = *output_shape_or;
     xla::Shape start_shape =
         xla::ShapeUtil::MakeTupleShape({input_shape, output_shape});
     (*ctx.values)[op.getResult()] =
@@ -3695,10 +3716,13 @@ LogicalResult ExportXlaOp(AsyncDoneOp op, OpLoweringContext ctx) {
   }
 
   if (auto collective_broadcast = dyn_cast<CollectiveBroadcastOp>(collective)) {
+    mlir::FailureOr<xla::Shape> shape_or = xla::ExtractXlaShape(&collective);
+    if (failed(shape_or)) {
+      return failure();
+    }
     (*ctx.values)[op.getResult()] =
-        xla::internal::XlaBuilderFriend::BuildAsyncDone(
-            ctx.builder, operand,
-            xla::TypeToShape(collective_broadcast.getType()));
+        xla::internal::XlaBuilderFriend::BuildAsyncDone(ctx.builder, operand,
+                                                        *shape_or);
     return success();
   }
 
