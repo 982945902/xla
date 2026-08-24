@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "cc_library", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
-# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -270,8 +270,8 @@ cc_library(
 #     parse_tests = False,
 #     visibility = ["//visibility:private"],
 #     deps = [
-#         "@rules_cc//cc:core_rules",
 #         "//xla/tsl:package_groups_bzl",
+#         "@rules_cc//cc:core_rules",
 #     ],
 # )
 #
@@ -282,8 +282,8 @@ cc_library(
 #     visibility = ["//visibility:private"],
 #     deps = [
 #         "//devtools/build_cleaner/skylark:build_defs_lib",
-#         "@rules_cc//cc:core_rules",
 #         "//xla:xla_bzl",
+#         "@rules_cc//cc:core_rules",
 #     ],
 # )
 # copybara:uncomment_end

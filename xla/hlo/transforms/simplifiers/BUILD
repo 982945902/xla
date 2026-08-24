@@ -1250,11 +1250,11 @@ xla_cc_test(
 #     srcs = ["hlo_constant_folding_peak_heap_test.cc"],
 #     deps = [
 #         ":hlo_constant_folding",
-#         "@com_google_googletest//:gtest",
-#         "@com_google_googletest//:gtest_main",
-#         "@com_google_absl//absl/strings:str_format",
 #         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
 #         "//xla/tsl/platform:statusor",
+#         "@com_google_absl//absl/strings:str_format",
+#         "@com_google_googletest//:gtest",
+#         "@com_google_googletest//:gtest_main",
 #     ],
 # )
 # copybara:uncomment_end

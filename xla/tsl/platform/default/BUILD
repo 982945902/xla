@@ -596,9 +596,9 @@ bzl_library(
     # copybara:uncomment parse_tests = False,
     deps = [
         ":build_config_root_bzl",
-        # copybara:uncomment "@rules_cc//cc:core_rules",
         "//xla/tsl:tsl_bzl",
         "@rules_ml_toolchain//py/rules_pywrap:pywrap_bzl",
+        # copybara:uncomment "@rules_cc//cc:core_rules",
     ],
 )
 

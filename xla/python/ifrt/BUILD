@@ -1,12 +1,13 @@
-# copybara:uncomment load("//devtools/c/portability/clang_verify:cc_clang_verify_test.bzl", "cc_clang_verify_test")
+# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+
+# copybara:uncomment load("//devtools/c/portability/clang_verify:cc_clang_verify_test.bzl", "cc_clang_verify_test")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/python/ifrt:ifrt.bzl", "ifrt_package_groups")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform/default:rules_cc.bzl", "cc_library")
-# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

@@ -51,8 +51,8 @@ bzl_library(
     name = "build_defs",
     srcs = ["build_defs.bzl"],
     deps = [
-        # copybara:uncomment "@rules_cc//cc:core_rules",
         "//xla/tsl:package_groups_bzl",
+        # copybara:uncomment "@rules_cc//cc:core_rules",
     ],
 )
 

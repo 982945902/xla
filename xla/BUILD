@@ -1,8 +1,8 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 
-# copybara:uncomment load("//devtools/build_cleaner/skylark:action_config_test.bzl", "action_config_test")
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
+# copybara:uncomment load("//devtools/build_cleaner/skylark:action_config_test.bzl", "action_config_test")
+load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 load("//xla:package_groups.bzl", "xla_package_groups")
 load("//xla:xla.default.bzl", "xla_bzl_library", "xla_cc_test", "xla_py_proto_library")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
@@ -1622,12 +1622,12 @@ bzl_library(
         ":native_test_bzl",
         ":platform_native_rule_bzl",
         "//xla/tests:build_defs_bzl",
-        "@rules_cc//cc/common",
-        # copybara:uncomment "@rules_python//python:defs_bzl",
-        "@bazel_skylib//lib:paths",
         "//xla/tsl:package_groups_bzl",
         "//xla/tsl:tsl_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
+        "@bazel_skylib//lib:paths",
+        "@rules_cc//cc/common",
+        # copybara:uncomment "@rules_python//python:defs_bzl",
     ],
 )
 
