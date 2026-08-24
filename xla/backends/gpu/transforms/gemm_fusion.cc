@@ -1209,15 +1209,6 @@ bool IsBinaryElementwiseOfBroadcastParamOrConst(const HloInstruction& hlo) {
   return false;
 }
 
-FusionDecision ShouldFuseUser(mlir::MLIRContext& mlir_context,
-                              HloInstruction* user,
-                              const HloInstruction& original_user,
-                              HloInstruction* fusion) {
-  if (triton_fusion::IsOutputWorthFusing(original_user)) {
-    return CanFuse(mlir_context, fusion, user);
-  }
-  return FusionDecision::Forbid("Not obviously profitable to fuse as output.");
-}
 
 // Holds shape tracking information for an instruction during backward BFS.
 struct TrackerInfo {
@@ -1377,6 +1368,98 @@ std::optional<TrackerInfo> ComputeCandidateTracker(
   return std::nullopt;
 }
 
+FusionDecision ShouldFuseUserTranspose(const HloInstruction& transpose,
+                                       const HloInstruction& fusion,
+                                       const ShapeTracker& tracker) {
+  const HloInstruction* dot = hlo_query::FindInstruction(
+      fusion.fused_instructions_computation(), HloOpcode::kDot);
+  if (dot == nullptr) {
+    return FusionDecision::Forbid("Dot not found in fusion.");
+  }
+
+  auto dot_dims = DotOperandDims::FromDot(dot);
+  if (!dot_dims.ok()) {
+    return FusionDecision::Forbid("Failed to get dot operand dims.");
+  }
+  const auto& [lhs_dims, rhs_dims] = *dot_dims;
+
+  absl::Span<const int64_t> batch_dims =
+      lhs_dims.Indices(DotOperandDims::kBatch);
+  absl::Span<const int64_t> lhs_nc_dims =
+      lhs_dims.Indices(DotOperandDims::kNonContracting);
+  absl::Span<const int64_t> rhs_nc_dims =
+      rhs_dims.Indices(DotOperandDims::kNonContracting);
+
+  // Checks that for each logical dimension group of the dot (batch, LHS
+  // non-contracting, and RHS non-contracting), the transpose does not scramble
+  // or swap sub-dimensions originating from that same group. Interleaving
+  // sub-dimensions across different groups (e.g. batch and non-contracting) is
+  // permitted, but intra-group ordering must remain monotonic.
+  for (const auto& dim_group : {batch_dims, lhs_nc_dims, rhs_nc_dims}) {
+    if (dim_group.empty()) {
+      continue;
+    }
+    absl::StatusOr<ShapeTracker> narrowed = tracker.Narrow(dim_group);
+    if (!narrowed.ok()) {
+      return FusionDecision::Forbid(
+          absl::StrCat("Failed to narrow tracker for dimension group: ",
+                       narrowed.status().message()));
+    }
+    bool has_swaps = absl::c_any_of(
+        narrowed->GetSteps(), [](const ShapeTracker::Step& step) {
+          return step.type == ShapeTracker::Step::Type::kTranspose;
+        });
+    if (has_swaps) {
+      return FusionDecision::Forbid(
+          "Transpose scrambles sub-dimensions within a dimension group.");
+    }
+  }
+
+  return FusionDecision::Allow();
+}
+
+// Propagates shape tracking information forward from the dot output to `user`.
+// Returns the updated ShapeTracker if propagation is successful, or nullopt if
+// propagation fails.
+std::optional<ShapeTracker> ComputeUserTracker(
+    const HloInstruction* user,
+    const std::optional<ShapeTracker>& current_tracker) {
+  if (!current_tracker.has_value()) {
+    return std::nullopt;
+  }
+  ShapeTracker next_tracker = *current_tracker;
+  if (next_tracker.AppendInstruction(user).ok()) {
+    return next_tracker;
+  }
+  if (user->IsElementwise()) {
+    next_tracker.SetElementType(user->shape().element_type());
+    return next_tracker;
+  }
+  return std::nullopt;
+}
+
+FusionDecision ShouldFuseUser(HloInstruction* user,
+                              const HloInstruction& original_user,
+                              HloInstruction* fusion,
+                              const std::optional<ShapeTracker>& tracker) {
+  switch (user->opcode()) {
+    case HloOpcode::kTranspose:
+      if (!tracker.has_value()) {
+        return FusionDecision::Forbid(
+            "No shape tracker found for transpose user.");
+      }
+      return ShouldFuseUserTranspose(*user, *fusion, *tracker);
+    default:
+      break;
+  }
+
+  if (!triton_fusion::IsOutputWorthFusing(original_user)) {
+    return FusionDecision::Forbid(
+        "Not obviously profitable to fuse as output.");
+  }
+  return FusionDecision::Allow();
+}
+
 // Attempts to fuse all candidates and their operands into the fusion.
 absl::Status FuseOperandsBFS(
     mlir::MLIRContext& mlir_context, FusionSearchSpace& search_space,
@@ -1514,6 +1597,9 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
   ABSL_RETURN_IF_ERROR(
       FuseOperandsBFS(mlir_context, fusion_search_space, queue, fusion));
 
+  // Initialize tracker for dot users.
+  std::optional<ShapeTracker> epilogue_tracker = ShapeTracker(dot->shape());
+
   // Fuse in users until we cannot tile or reach the root.
   while (!fusion->IsRoot()) {
     // Search space was created so that the result only ever has a single user.
@@ -1530,10 +1616,13 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
       }
     }
 
+    epilogue_tracker = ComputeUserTracker(user, epilogue_tracker);
+
     HloInstruction* original_user =
         fusion_search_space.fused_to_original().at(user);
     if (FusionDecision decision =
-            ShouldFuseUser(mlir_context, user, *original_user, fusion);
+            ShouldFuseUser(user, *original_user, fusion, epilogue_tracker)
+                .And(CanFuse(mlir_context, fusion, user));
         !decision.IsAllowed()) {
       VLOG(5) << "Not fusing user: " << decision.Explain();
       break;
