@@ -323,6 +323,47 @@ ENTRY e {
               GmockMatch(m::Bitcast(m::Fusion())));
 }
 
+TEST_P(GemmFusionTestV2, TransposeUserIsFused) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[2048,42,8128]{2,1,0} parameter(0)
+  p1 = f32[2048,42,42]{2,1,0} parameter(1)
+  dot = f32[2048,8128,42]{1,2,0} dot(p0, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={1},
+    rhs_batch_dims={0}, rhs_contracting_dims={2}
+  bitcast0 = f32[2048,42,8128]{2,1,0} bitcast(dot)
+  bitcast1 = f32[512,4,42,127,64]{4,3,2,1,0} bitcast(bitcast0)
+  ROOT transpose = f32[512,127,4,42,64]{4,3,2,1,0} transpose(bitcast1), dimensions={0,3,1,2,4}
+})"));
+  ASSERT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+}
+
+TEST_P(GemmFusionTestV2, TransposeUserScramblesSubDimensionsIsNotFused) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[2048,42,8128]{2,1,0} parameter(0)
+  p1 = f32[2048,42,42]{2,1,0} parameter(1)
+  dot = f32[2048,8128,42]{1,2,0} dot(p0, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={1},
+    rhs_batch_dims={0}, rhs_contracting_dims={2}
+  bitcast0 = f32[2048,42,8128]{2,1,0} bitcast(dot)
+  bitcast1 = f32[512,4,42,127,64]{4,3,2,1,0} bitcast(bitcast0)
+  // Sub-dimensions 0 (size 512) and 1 (size 4) originate from batch dim 0
+  // (size 2048). Transposing them as {1, 0, ...} swaps their internal order,
+  // which is rejected.
+  ROOT transpose = f32[4,512,127,42,64]{4,3,2,1,0} transpose(bitcast1), dimensions={1,0,3,2,4}
+})"));
+  ASSERT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Transpose(m::Bitcast(m::Fusion()))));
+}
+
 TEST_P(GemmFusionTestV2, UnhoistedBitcastCanStillBeFused) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -1797,33 +1838,6 @@ ENTRY e {
   EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(GemmFusionTest, FusionShouldNotDuplicatePowerOp) {
-  // Elementwise operations with broadcast operands are usually fused, however
-  // with multiple users it can result in executing the op twice.
-  auto module = ParseAndReturnVerifiedModule(R"(
-HloModule m
-
-ENTRY e {
-  p0 = f16[124,1024] parameter(0)
-  constant1 = f16[] constant(2)
-  broadcast1 = f16[124,1024] broadcast(constant1)
-  pow = f16[124,1024] power(p0, broadcast1)
-
-  p1 = s8[1024,124] parameter(1)
-  c = f16[1024,124] convert(p1)
-  dot1 = f16[124,124] dot(pow, c),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-
-  ROOT d = (f16[124,1024],f16[124,124]) tuple(pow, dot1)
-})")
-                    .value();
-  ASSERT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-  MatchHloModule(*module, R"(
-; CHECK: power(
-; CHECK-NOT: power(
-)");
-}
-
 // A test fixture class for testing the threshold for small matrices.
 class SmallDotGemmFusionTest : public GemmFusionTest {
  public:
@@ -2230,6 +2244,52 @@ ENTRY e {
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())));
+}
+
+TEST_P(GemmFusionProfitabilityTest, PowerOperandWithSingleUserIsFused) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[8192,3072] parameter(0)
+  p2 = f32[3072] parameter(2)
+  b = f32[8192,3072] broadcast(p2), dimensions={1}
+  pow = f32[8192,3072] power(p0, b)
+  p1 = f32[3072,768] parameter(1)
+  ROOT r = f32[8192,768] dot(pow, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  ASSERT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())));
+}
+
+TEST_P(GemmFusionProfitabilityTest, FusionShouldNotDuplicatePowerOp) {
+  // Elementwise operations with broadcast operands are usually fused, however
+  // with multiple users it can result in executing the op twice.
+  auto module = ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f16[124,1024] parameter(0)
+  constant1 = f16[] constant(2)
+  broadcast1 = f16[124,1024] broadcast(constant1)
+  pow = f16[124,1024] power(p0, broadcast1)
+
+  p1 = s8[1024,124] parameter(1)
+  c = f16[1024,124] convert(p1)
+  dot1 = f16[124,124] dot(pow, c),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+
+  ROOT d = (f16[124,1024],f16[124,124]) tuple(pow, dot1)
+})")
+                    .value();
+  ASSERT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  MatchHloModule(*module, R"(
+; CHECK: power(
+; CHECK-NOT: power(
+)");
 }
 
 TEST_P(GemmFusionProfitabilityTest, UnprofitableConvertOutput) {
