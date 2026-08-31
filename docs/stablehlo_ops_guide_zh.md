@@ -23,7 +23,7 @@
 
 ### `add`
 
-逐元素加法。例：`[1,2] + [10,20] -> [11,22]`；两边 shape 必须兼容且通常相同。
+逐元素加法。例：`[1,2] + [10,20] -> [11,22]`。`stablehlo.add` **不执行隐式广播**：对非量化 tensor，`lhs`、`rhs` 和 `result` 的完整类型必须相同，因此 shape 和元素类型都必须相同。如果前端语言允许 NumPy 风格广播，前端必须先显式插入 `broadcast_in_dim`，再执行 `add`。
 
 ### `atan2`
 
@@ -231,7 +231,7 @@ Sigmoid：`1 / (1 + exp(-x))`。例：`logistic(0)=0.5`。
 
 ### `broadcast_in_dim`
 
-把低 rank tensor 广播到高 rank，并显式指定原维度映射。例：`bias:[3]` 通过 `broadcast_dimensions=[1]` 广播成 `[2,3]`：两行都为 bias。
+把低 rank tensor 广播到高 rank，并显式指定原维度映射。例：`bias:[3]` 通过 `broadcast_dimensions=[1]` 广播成 `[2,3]`：两行都为 bias。StableHLO 的逐元素二元 op 不隐式广播，因此 `tensor<2x3xf32> + tensor<3xf32>` 必须先把后者广播成 `tensor<2x3xf32>`。
 
 ### `dynamic_broadcast_in_dim`
 
@@ -589,4 +589,3 @@ XLA HLO
   ↓ HLO passes
 optimized HLO
 ```
-
