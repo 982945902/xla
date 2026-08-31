@@ -23,7 +23,7 @@
 
 ### `add`
 
-逐元素加法。例：`[1,2] + [10,20] -> [11,22]`。`stablehlo.add` **不执行隐式广播**：对非量化 tensor，`lhs`、`rhs` 和 `result` 的完整类型必须相同，因此 shape 和元素类型都必须相同。如果前端语言允许 NumPy 风格广播，前端必须先显式插入 `broadcast_in_dim`，再执行 `add`。
+逐元素加法。例：`[1,2] + [10,20] -> [11,22]`。`stablehlo.add` **不执行隐式广播**：规范对非量化 tensor 写作 `type(lhs) = type(rhs) = type(result)`。当前 MLIR 实现分别检查相同元素类型和兼容 shape，因此 `tensor<?x3xf32>` 与 `tensor<2x3xf32>` 这类动态维度细化可以兼容，但 `[2,3]` 与 `[3]` 这种 rank/shape 差异不是广播，仍然非法。如果前端语言允许 NumPy 风格广播，前端必须先显式插入 `broadcast_in_dim`，再执行 `add`。
 
 ### `atan2`
 
